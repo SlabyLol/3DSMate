@@ -26,7 +26,6 @@ jobs:
             imagemagick sox \
             libyaml-dev
 
-      # Build jansson from source (cross-compiled for ARM 3DS)
       - name: Build jansson for 3DS
         run: |
           git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
@@ -40,7 +39,6 @@ jobs:
           make -j$(nproc)
           make install
 
-      # makerom: show layout then build
       - name: Build makerom
         run: |
           git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
@@ -49,16 +47,12 @@ jobs:
           make -j$(nproc)
           cp bin/makerom /usr/local/bin/makerom
 
-      # bannertool is in Steveice10/buildtools
       - name: Build bannertool
         run: |
-          git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
-          find /tmp/buildtools -maxdepth 3 | sort
-          cd /tmp/buildtools/3ds/bannertool
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-          cp bannertool /usr/local/bin/bannertool
+          git clone --depth 1 https://github.com/carstene1ns/3ds-bannertool.git /tmp/bannertool
+          cmake -B /tmp/bannertool/build /tmp/bannertool -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/bannertool/build -j$(nproc)
+          cp /tmp/bannertool/build/bannertool /usr/local/bin/bannertool
 
       - name: Prepare meta assets
         run: |
