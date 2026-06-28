@@ -23,20 +23,22 @@ jobs:
         id: cache-devkitpro
         with:
           path: /opt/devkitpro
-          key: devkitpro-3ds-${{ runner.os }}-v2
+          key: devkitpro-3ds-${{ runner.os }}-v3
 
       # ── 3. Install devkitPro + ARM toolchain + 3DS libs ─────────────────────
       - name: Install devkitPro
         if: steps.cache-devkitpro.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y wget
+          sudo apt-get install -y wget gzip tar
 
-          wget https://apt.devkitpro.org/install-devkitpro-pacman
-          chmod +x ./install-devkitpro-pacman
-          echo "y" | sudo ./install-devkitpro-pacman
+          # Official devkitPro pacman bootstrap (replaces the old install script)
+          wget -q https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.amd64.deb \
+               -O /tmp/devkitpro-pacman.deb
+          sudo apt-get install -y /tmp/devkitpro-pacman.deb
+          sudo dkp-pacman --noconfirm -Sy
 
-          sudo /opt/devkitpro/pacman/bin/pacman -S --noconfirm \
+          sudo dkp-pacman --noconfirm -S \
             devkitARM \
             3ds-dev \
             3ds-jansson
