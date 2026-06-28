@@ -24,7 +24,7 @@ jobs:
           apt-get install -y \
             build-essential cmake git \
             imagemagick sox \
-            libmbedtls-dev
+            libyaml-dev
 
       # Build jansson from source (cross-compiled for ARM 3DS)
       - name: Build jansson for 3DS
@@ -40,19 +40,20 @@ jobs:
           make -j$(nproc)
           make install
 
-      # makerom uses a plain Makefile, not CMake
+      # makerom uses a plain Makefile; liblbz is bundled in deps/
       - name: Build makerom
         run: |
           git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
           cd /tmp/ctr/makerom
+          # Build the bundled liblbz first
+          make -C deps/liblbz
           make -j$(nproc)
-          cp makerom /usr/local/bin/makerom
+          cp bin/makerom /usr/local/bin/makerom
 
-      # bannertool is in Steveice10/buildtools, uses CMake
+      # bannertool is in Steveice10/buildtools
       - name: Build bannertool
         run: |
           git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
-          ls /tmp/buildtools/
           cd /tmp/buildtools/bannertool
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
