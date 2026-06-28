@@ -40,13 +40,15 @@ jobs:
           make -j$(nproc)
           make install
 
-      # makerom uses a plain Makefile; liblbz is bundled in deps/
+      # makerom: show layout then build
       - name: Build makerom
         run: |
           git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
+          echo "=== Project_CTR root ===" && ls /tmp/ctr/
+          echo "=== makerom dir ===" && ls /tmp/ctr/makerom/
+          echo "=== makerom/deps (if exists) ===" && ls /tmp/ctr/makerom/deps/ 2>/dev/null || echo "(no deps dir)"
           cd /tmp/ctr/makerom
-          # Build the bundled liblbz first
-          make -C deps/liblbz
+          make deps
           make -j$(nproc)
           cp bin/makerom /usr/local/bin/makerom
 
@@ -54,6 +56,8 @@ jobs:
       - name: Build bannertool
         run: |
           git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
+          echo "=== buildtools root ===" && ls /tmp/buildtools/
+          echo "=== bannertool dir ===" && ls /tmp/buildtools/bannertool/ 2>/dev/null || echo "(no bannertool dir)"
           cd /tmp/buildtools/bannertool
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
