@@ -53,6 +53,7 @@ jobs:
       - name: Build bannertool
         run: |
           git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
+          find /tmp/buildtools -maxdepth 3 | sort
           cd /tmp/buildtools/3ds/bannertool
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
