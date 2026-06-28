@@ -8,11 +8,30 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Debug job: find what's in the devkitarm image and the mirror
+  debug:
+    name: Debug environment
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkitarm:latest
+    steps:
+      - name: What's in devkitpro?
+        run: |
+          echo "=== /opt/devkitpro layout ==="
+          find /opt/devkitpro -maxdepth 3 | sort
+          echo "=== looking for 3ds.mk anywhere ==="
+          find / -name "3ds.mk" 2>/dev/null
+          echo "=== looking for libctru ==="
+          find / -name "libctru.a" 2>/dev/null
+          echo "=== dkp-pacman list ==="
+          dkp-pacman -Q 2>/dev/null || echo "no packages listed"
+
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkitarm:latest
+    needs: debug
 
     steps:
       - name: Checkout repository
@@ -26,34 +45,25 @@ jobs:
             imagemagick sox \
             libyaml-dev zstd xz-utils
 
-      # pkg.devkitpro.org returns 403 from CI, so we use the community mirror.
-      # Packages are .pkg.tar.zst/.pkg.tar.xz archives that extract straight into /opt/devkitpro.
       - name: Install 3DS libs from mirror
         run: |
           MIRROR="https://wii.leseratte10.de/devkitPro"
           DKP="/opt/devkitpro"
           mkdir -p "$DKP"
 
-          install_xz()  { wget -q "$1" -O /tmp/p.tar.xz  && tar --use-compress-program=xz  -xf /tmp/p.tar.xz  -C "$DKP" 2>/dev/null; rm -f /tmp/p.tar.xz;  }
-          install_zst() { wget -q "$1" -O /tmp/p.tar.zst && tar --use-compress-program=unzstd -xf /tmp/p.tar.zst -C "$DKP" 2>/dev/null; rm -f /tmp/p.tar.zst; }
+          install_xz()  { wget -q "$1" -O /tmp/p.tar.xz  && tar -xf /tmp/p.tar.xz  -C "$DKP" 2>/dev/null && echo "OK: $1" || echo "FAIL: $1"; rm -f /tmp/p.tar.xz;  }
+          install_zst() { wget -q "$1" -O /tmp/p.tar.zst && tar -xf /tmp/p.tar.zst -C "$DKP" 2>/dev/null && echo "OK: $1" || echo "FAIL: $1"; rm -f /tmp/p.tar.zst; }
 
-          # devkitarm-crtls — provides 3ds.mk, 3dsx.specs, etc.
           install_xz  "$MIRROR/3ds/devkitarm-crtls-1.1.0-3-any.pkg.tar.xz"
-
-          # libctru — core 3DS homebrew library
           install_xz  "$MIRROR/libctru/2020/libctru-2.0.1-1-any.pkg.tar.xz"
-
-          # 3ds cmake toolchain
           install_zst "$MIRROR/cmake/3ds-cmake-1.5.1-1-any.pkg.tar.zst"
-
-          # 3ds-mbedtls — for HTTPS (httpc uses it)
           install_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
-
-          # 3ds-jansson — JSON parsing
           install_xz  "$MIRROR/3ds/3ds-jansson-2.12-1-any.pkg.tar.xz"
 
-          echo "=== Checking for 3ds.mk ==="
+          echo "=== 3ds.mk search ==="
           find "$DKP" -name "3ds.mk" 2>/dev/null
+          echo "=== full /opt/devkitpro layout ==="
+          find "$DKP" -maxdepth 4 | sort
 
       - name: Build makerom
         run: |
@@ -73,21 +83,12 @@ jobs:
       - name: Prepare meta assets
         run: |
           mkdir -p meta
-
           if [ ! -f meta/icon.png ]; then
-            convert -size 48x48 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 \
-              -gravity center -annotate 0 "3DS\nMate" \
-              meta/icon.png
+            convert -size 48x48 xc:"#1a1a2e" -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 -gravity center -annotate 0 "3DS\nMate" meta/icon.png
           fi
-
           if [ ! -f meta/banner.png ]; then
-            convert -size 256x128 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 \
-              -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" \
-              meta/banner.png
+            convert -size 256x128 xc:"#1a1a2e" -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" meta/banner.png
           fi
-
           if [ ! -f meta/audio.wav ]; then
             sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
           fi
@@ -97,36 +98,10 @@ jobs:
 
       - name: Build 3DSMate.cia
         run: |
-          smdhtool --create \
-            "3DSMate" \
-            "AI Chat powered by Groq" \
-            "3DSMate Project" \
-            meta/icon.png \
-            3DSMate.smdh
-
-          bannertool makebanner \
-            -i meta/banner.png \
-            -a meta/audio.wav \
-            -o 3DSMate.bnr
-
-          bannertool makesmdh \
-            -s "3DSMate" \
-            -l "AI Chat powered by Groq" \
-            -p "3DSMate Project" \
-            -i meta/icon.png \
-            -o 3DSMate.icn
-
-          makerom \
-            -f cia \
-            -o 3DSMate.cia \
-            -elf 3DSMate.elf \
-            -rsf meta/3DSMate.rsf \
-            -banner 3DSMate.bnr \
-            -icon 3DSMate.icn \
-            -major 1 -minor 0 -micro 0
-
-          echo "3dsx: $(du -sh 3DSMate.3dsx)"
-          echo " cia: $(du -sh 3DSMate.cia)"
+          smdhtool --create "3DSMate" "AI Chat powered by Groq" "3DSMate Project" meta/icon.png 3DSMate.smdh
+          bannertool makebanner -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
+          bannertool makesmdh -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" -i meta/icon.png -o 3DSMate.icn
+          makerom -f cia -o 3DSMate.cia -elf 3DSMate.elf -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn -major 1 -minor 0 -micro 0
 
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
@@ -161,7 +136,7 @@ jobs:
             Copy `3DSMate.3dsx` to `/3ds/3DSMate/3DSMate.3dsx` on your SD card and open via Homebrew Launcher.
 
             ### Install .cia
-            Copy `3DSMate.cia` to your SD card and install with **FBI**. The app appears on your HOME menu.
+            Copy `3DSMate.cia` to your SD card and install with **FBI**.
 
             ### First launch
             Press **X** to enter your [Groq API key](https://console.groq.com) — saved automatically.
