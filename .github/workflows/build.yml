@@ -8,62 +8,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Debug job: find what's in the devkitarm image and the mirror
-  debug:
-    name: Debug environment
-    runs-on: ubuntu-latest
-    container:
-      image: devkitpro/devkitarm:latest
-    steps:
-      - name: What's in devkitpro?
-        run: |
-          echo "=== /opt/devkitpro layout ==="
-          find /opt/devkitpro -maxdepth 3 | sort
-          echo "=== looking for 3ds.mk anywhere ==="
-          find / -name "3ds.mk" 2>/dev/null
-          echo "=== looking for libctru ==="
-          find / -name "libctru.a" 2>/dev/null
-          echo "=== dkp-pacman list ==="
-          dkp-pacman -Q 2>/dev/null || echo "no packages listed"
-
   build:
     name: Build .3dsx and .cia
-    runs-on: ubuntu-latest
-    container:
-      image: devkitpro/devkitarm:latest
-    needs: debug
+    runs-on: ubuntu-22.04
+    # No container — plain Ubuntu runner, install everything ourselves
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install system dependencies
         run: |
-          apt-get update -q
-          apt-get install -y \
+          sudo apt-get update -q
+          sudo apt-get install -y \
             build-essential cmake git wget \
             imagemagick sox \
-            libyaml-dev zstd xz-utils
+            libyaml-dev zstd xz-utils \
+            libncurses5-dev
 
-      - name: Install 3DS libs from mirror
+      - name: Install devkitPro pacman
         run: |
-          MIRROR="https://wii.leseratte10.de/devkitPro"
-          DKP="/opt/devkitpro"
-          mkdir -p "$DKP"
+          wget -q https://github.com/devkitPro/pacman/releases/download/v1.0.2/devkitpro-pacman.amd64.deb \
+               -O /tmp/dkp-pacman.deb
+          sudo apt-get install -y /tmp/dkp-pacman.deb
+          sudo dkp-pacman -Sy --noconfirm
+          sudo dkp-pacman -S --noconfirm devkitARM 3ds-dev 3ds-jansson
 
-          install_xz()  { wget -q "$1" -O /tmp/p.tar.xz  && tar -xf /tmp/p.tar.xz  -C "$DKP" 2>/dev/null && echo "OK: $1" || echo "FAIL: $1"; rm -f /tmp/p.tar.xz;  }
-          install_zst() { wget -q "$1" -O /tmp/p.tar.zst && tar -xf /tmp/p.tar.zst -C "$DKP" 2>/dev/null && echo "OK: $1" || echo "FAIL: $1"; rm -f /tmp/p.tar.zst; }
-
-          install_xz  "$MIRROR/3ds/devkitarm-crtls-1.1.0-3-any.pkg.tar.xz"
-          install_xz  "$MIRROR/libctru/2020/libctru-2.0.1-1-any.pkg.tar.xz"
-          install_zst "$MIRROR/cmake/3ds-cmake-1.5.1-1-any.pkg.tar.zst"
-          install_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
-          install_xz  "$MIRROR/3ds/3ds-jansson-2.12-1-any.pkg.tar.xz"
-
-          echo "=== 3ds.mk search ==="
-          find "$DKP" -name "3ds.mk" 2>/dev/null
-          echo "=== full /opt/devkitpro layout ==="
-          find "$DKP" -maxdepth 4 | sort
+      - name: Set devkitPro environment
+        run: |
+          echo "DEVKITPRO=/opt/devkitpro"           >> $GITHUB_ENV
+          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
+          echo "/opt/devkitpro/tools/bin"            >> $GITHUB_PATH
+          echo "/opt/devkitpro/devkitARM/bin"        >> $GITHUB_PATH
 
       - name: Build makerom
         run: |
@@ -71,23 +47,27 @@ jobs:
           cd /tmp/ctr/makerom
           make deps
           make -j$(nproc)
-          cp bin/makerom /usr/local/bin/makerom
+          sudo cp bin/makerom /usr/local/bin/makerom
 
       - name: Build bannertool
         run: |
           git clone --depth 1 https://github.com/carstene1ns/3ds-bannertool.git /tmp/bannertool
           cmake -B /tmp/bannertool/build /tmp/bannertool -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/bannertool/build -j$(nproc)
-          cp /tmp/bannertool/build/bannertool /usr/local/bin/bannertool
+          sudo cp /tmp/bannertool/build/bannertool /usr/local/bin/bannertool
 
       - name: Prepare meta assets
         run: |
           mkdir -p meta
           if [ ! -f meta/icon.png ]; then
-            convert -size 48x48 xc:"#1a1a2e" -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 -gravity center -annotate 0 "3DS\nMate" meta/icon.png
+            convert -size 48x48 xc:"#1a1a2e" \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 \
+              -gravity center -annotate 0 "3DS\nMate" meta/icon.png
           fi
           if [ ! -f meta/banner.png ]; then
-            convert -size 256x128 xc:"#1a1a2e" -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" meta/banner.png
+            convert -size 256x128 xc:"#1a1a2e" \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 \
+              -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" meta/banner.png
           fi
           if [ ! -f meta/audio.wav ]; then
             sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
@@ -98,10 +78,24 @@ jobs:
 
       - name: Build 3DSMate.cia
         run: |
-          smdhtool --create "3DSMate" "AI Chat powered by Groq" "3DSMate Project" meta/icon.png 3DSMate.smdh
-          bannertool makebanner -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
-          bannertool makesmdh -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" -i meta/icon.png -o 3DSMate.icn
-          makerom -f cia -o 3DSMate.cia -elf 3DSMate.elf -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn -major 1 -minor 0 -micro 0
+          smdhtool --create \
+            "3DSMate" "AI Chat powered by Groq" "3DSMate Project" \
+            meta/icon.png 3DSMate.smdh
+
+          bannertool makebanner \
+            -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
+
+          bannertool makesmdh \
+            -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" \
+            -i meta/icon.png -o 3DSMate.icn
+
+          makerom \
+            -f cia -o 3DSMate.cia -elf 3DSMate.elf \
+            -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn \
+            -major 1 -minor 0 -micro 0
+
+          echo "3dsx: $(du -sh 3DSMate.3dsx)"
+          echo " cia: $(du -sh 3DSMate.cia)"
 
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
