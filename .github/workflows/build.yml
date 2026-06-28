@@ -18,47 +18,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # devkitpro/devkitarm already ships 3ds-dev.
-      # We build jansson from source to avoid hitting pkg.devkitpro.org
-      # (which returns 403 from GitHub Actions runners).
-      - name: Build and install jansson
+      - name: Install build dependencies
         run: |
           apt-get update -q
-          apt-get install -y cmake build-essential git imagemagick sox
+          apt-get install -y \
+            build-essential cmake git \
+            imagemagick sox \
+            libmbedtls-dev
 
+      # Build jansson from source (cross-compiled for ARM 3DS)
+      - name: Build jansson for 3DS
+        run: |
           git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
-          cd /tmp/jansson
-          mkdir build && cd build
+          mkdir /tmp/jansson/build && cd /tmp/jansson/build
           cmake .. \
-            -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds \
-            -DCMAKE_C_COMPILER=/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc \
-            -DCMAKE_SYSTEM_NAME=Generic \
+            -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/3DS.cmake \
             -DJANSSON_BUILD_SHARED_LIBS=OFF \
             -DJANSSON_WITHOUT_TESTS=ON \
-            -DJANSSON_EXAMPLES=OFF
+            -DJANSSON_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds
           make -j$(nproc)
           make install
-          cd /
 
-      - name: Install CIA build tools
+      # makerom uses a plain Makefile, not CMake
+      - name: Build makerom
         run: |
-          # makerom
           git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
           cd /tmp/ctr/makerom
-          mkdir build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
           cp makerom /usr/local/bin/makerom
-          cd /
 
-          # bannertool (moved to Steveice10/buildtools)
+      # bannertool is in Steveice10/buildtools, uses CMake
+      - name: Build bannertool
+        run: |
           git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
+          ls /tmp/buildtools/
           cd /tmp/buildtools/bannertool
           mkdir build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
           cp bannertool /usr/local/bin/bannertool
-          cd /
 
       - name: Prepare meta assets
         run: |
