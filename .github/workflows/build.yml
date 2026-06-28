@@ -100,41 +100,12 @@ jobs:
             -i meta/icon.png \
             -o 3DSMate.icn
 
-          # makerom RSF spec
-          cat > 3DSMate.rsf << 'RSF'
-BasicInfo:
-  Title:       3DSMate
-  CompanyCode: "00"
-  ProductCode: CTR-P-MATE
-  ContentType: Application
-  Logo:        Nintendo
-
-RomFs:
-  RootPath: romfs
-
-SystemControlInfo:
-  SaveDataSize: 128KB
-
-AccessControlInfo:
-  UseRomFS:        true
-  IdealProcessor:  0
-  AffinityMask:    1
-  Priority:        48
-  MaxCpu:          100
-  MemoryType:      Application
-  HandleTableSize: 0x200
-  SystemMode:      64MB
-  CoreVersion:     2
-  EnableL2Cache:   true
-  ExtendedSaveDataAccessControl:
-    Other: true
-RSF
-
+          # RSF spec is in meta/3DSMate.rsf (checked into the repo)
           makerom \
             -f cia \
             -o 3DSMate.cia \
             -elf 3DSMate.elf \
-            -rsf 3DSMate.rsf \
+            -rsf meta/3DSMate.rsf \
             -banner 3DSMate.bnr \
             -icon 3DSMate.icn \
             -major 1 -minor 0 -micro 0
