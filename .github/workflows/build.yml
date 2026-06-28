@@ -18,17 +18,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install 3DS libs
-        run: |
-          dkp-pacman --noconfirm -Sy
-          dkp-pacman --noconfirm -S 3ds-dev 3ds-jansson
-
-      - name: Install CIA build tools
+      # devkitpro/devkitarm already ships 3ds-dev.
+      # We build jansson from source to avoid hitting pkg.devkitpro.org
+      # (which returns 403 from GitHub Actions runners).
+      - name: Build and install jansson
         run: |
           apt-get update -q
           apt-get install -y cmake build-essential git imagemagick sox
 
-          # makerom — build from source
+          git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
+          cd /tmp/jansson
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds \
+            -DCMAKE_C_COMPILER=/opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc \
+            -DCMAKE_SYSTEM_NAME=Generic \
+            -DJANSSON_BUILD_SHARED_LIBS=OFF \
+            -DJANSSON_WITHOUT_TESTS=ON \
+            -DJANSSON_EXAMPLES=OFF
+          make -j$(nproc)
+          make install
+          cd /
+
+      - name: Install CIA build tools
+        run: |
+          # makerom
           git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
           cd /tmp/ctr/makerom
           mkdir build && cd build
@@ -37,7 +51,7 @@ jobs:
           cp makerom /usr/local/bin/makerom
           cd /
 
-          # bannertool — build from source (moved to Steveice10/buildtools)
+          # bannertool (moved to Steveice10/buildtools)
           git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
           cd /tmp/buildtools/bannertool
           mkdir build && cd build
@@ -45,9 +59,6 @@ jobs:
           make -j$(nproc)
           cp bannertool /usr/local/bin/bannertool
           cd /
-
-          echo "makerom OK: $(makerom 2>&1 | head -1 || true)"
-          echo "bannertool OK: $(bannertool 2>&1 | head -1 || true)"
 
       - name: Prepare meta assets
         run: |
@@ -58,7 +69,6 @@ jobs:
               -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 \
               -gravity center -annotate 0 "3DS\nMate" \
               meta/icon.png
-            echo "Generated placeholder icon."
           fi
 
           if [ ! -f meta/banner.png ]; then
@@ -66,18 +76,14 @@ jobs:
               -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 \
               -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" \
               meta/banner.png
-            echo "Generated placeholder banner."
           fi
 
           if [ ! -f meta/audio.wav ]; then
             sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
-            echo "Generated silent audio."
           fi
 
       - name: Build 3DSMate.3dsx
-        run: |
-          make
-          echo "3dsx size: $(du -sh 3DSMate.3dsx)"
+        run: make
 
       - name: Build 3DSMate.cia
         run: |
@@ -109,7 +115,8 @@ jobs:
             -icon 3DSMate.icn \
             -major 1 -minor 0 -micro 0
 
-          echo "cia size: $(du -sh 3DSMate.cia)"
+          echo "3dsx: $(du -sh 3DSMate.3dsx)"
+          echo " cia: $(du -sh 3DSMate.cia)"
 
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
