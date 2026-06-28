@@ -11,39 +11,44 @@ jobs:
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-latest
-    # Use the official devkitPro Docker image — no manual install needed
     container:
       image: devkitpro/devkitarm:latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Install 3DS-specific libs inside the container ───────────────────
       - name: Install 3DS libs
         run: |
           dkp-pacman --noconfirm -Sy
           dkp-pacman --noconfirm -S 3ds-dev 3ds-jansson
 
-      # ── 3. Install makerom + bannertool (for .cia) ───────────────────────────
       - name: Install CIA build tools
         run: |
           apt-get update -q
-          apt-get install -y wget unzip imagemagick sox
+          apt-get install -y cmake build-essential git imagemagick sox
 
-          # bannertool
-          wget -q https://github.com/Steveice10/bannertool/releases/download/1.2.0/bannertool-linux-x86_64 \
-               -O /usr/local/bin/bannertool
-          chmod +x /usr/local/bin/bannertool
+          # makerom — build from source
+          git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
+          cd /tmp/ctr/makerom
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          cp makerom /usr/local/bin/makerom
+          cd /
 
-          # makerom
-          wget -q https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip \
-               -O /tmp/makerom.zip
-          unzip -o /tmp/makerom.zip makerom -d /usr/local/bin/
-          chmod +x /usr/local/bin/makerom
+          # bannertool — build from source (moved to Steveice10/buildtools)
+          git clone --depth 1 https://github.com/Steveice10/buildtools.git /tmp/buildtools
+          cd /tmp/buildtools/bannertool
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+          cp bannertool /usr/local/bin/bannertool
+          cd /
 
-      # ── 4. Generate placeholder assets if missing ────────────────────────────
+          echo "makerom OK: $(makerom 2>&1 | head -1 || true)"
+          echo "bannertool OK: $(bannertool 2>&1 | head -1 || true)"
+
       - name: Prepare meta assets
         run: |
           mkdir -p meta
@@ -69,16 +74,13 @@ jobs:
             echo "Generated silent audio."
           fi
 
-      # ── 5. Build .3dsx ───────────────────────────────────────────────────────
       - name: Build 3DSMate.3dsx
         run: |
           make
           echo "3dsx size: $(du -sh 3DSMate.3dsx)"
 
-      # ── 6. Build .cia ────────────────────────────────────────────────────────
       - name: Build 3DSMate.cia
         run: |
-          # SMDH (icon + metadata for HOME menu)
           smdhtool --create \
             "3DSMate" \
             "AI Chat powered by Groq" \
@@ -86,13 +88,11 @@ jobs:
             meta/icon.png \
             3DSMate.smdh
 
-          # Banner for CIA installer
           bannertool makebanner \
             -i meta/banner.png \
             -a meta/audio.wav \
             -o 3DSMate.bnr
 
-          # Icon for CIA
           bannertool makesmdh \
             -s "3DSMate" \
             -l "AI Chat powered by Groq" \
@@ -100,7 +100,6 @@ jobs:
             -i meta/icon.png \
             -o 3DSMate.icn
 
-          # RSF spec is in meta/3DSMate.rsf (checked into the repo)
           makerom \
             -f cia \
             -o 3DSMate.cia \
@@ -112,7 +111,6 @@ jobs:
 
           echo "cia size: $(du -sh 3DSMate.cia)"
 
-      # ── 7. Upload both as artifacts ──────────────────────────────────────────
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
         with:
@@ -127,7 +125,6 @@ jobs:
           path: 3DSMate.cia
           retention-days: 30
 
-      # ── 8. GitHub Release on tag push ───────────────────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -144,16 +141,13 @@ jobs:
             | `3DSMate.cia` | HOME Menu install via FBI (CFW required) |
 
             ### Install .3dsx
-            Copy `3DSMate.3dsx` to `/3ds/3DSMate/3DSMate.3dsx` on your SD card,
-            then open it via the Homebrew Launcher.
+            Copy `3DSMate.3dsx` to `/3ds/3DSMate/3DSMate.3dsx` on your SD card and open via Homebrew Launcher.
 
             ### Install .cia
-            Copy `3DSMate.cia` to your SD card and install it with **FBI**.
-            The app will appear on your HOME menu.
+            Copy `3DSMate.cia` to your SD card and install with **FBI**. The app appears on your HOME menu.
 
             ### First launch
-            Press **X** to enter your [Groq API key](https://console.groq.com) —
-            it is saved automatically and never needs to be entered again.
+            Press **X** to enter your [Groq API key](https://console.groq.com) — saved automatically.
 
             ### Controls
             | Button | Action |
