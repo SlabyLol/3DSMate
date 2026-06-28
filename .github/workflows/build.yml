@@ -11,107 +11,74 @@ jobs:
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-latest
+    # Use the official devkitPro Docker image — no manual install needed
+    container:
+      image: devkitpro/devkitarm:latest
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Cache devkitPro (saves ~5 min on repeat runs) ────────────────────
-      - name: Cache devkitPro
-        uses: actions/cache@v4
-        id: cache-devkitpro
-        with:
-          path: /opt/devkitpro
-          key: devkitpro-3ds-${{ runner.os }}-v3
-
-      # ── 3. Install devkitPro + ARM toolchain + 3DS libs ─────────────────────
-      - name: Install devkitPro
-        if: steps.cache-devkitpro.outputs.cache-hit != 'true'
+      # ── 2. Install 3DS-specific libs inside the container ───────────────────
+      - name: Install 3DS libs
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y wget gzip tar
+          dkp-pacman --noconfirm -Sy
+          dkp-pacman --noconfirm -S 3ds-dev 3ds-jansson
 
-          # Official devkitPro pacman bootstrap (replaces the old install script)
-          wget -q https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.amd64.deb \
-               -O /tmp/devkitpro-pacman.deb
-          sudo apt-get install -y /tmp/devkitpro-pacman.deb
-          sudo dkp-pacman --noconfirm -Sy
-
-          sudo dkp-pacman --noconfirm -S \
-            devkitARM \
-            3ds-dev \
-            3ds-jansson
-
-      # ── 4. Install makerom + bannertool (needed for .cia) ───────────────────
+      # ── 3. Install makerom + bannertool (for .cia) ───────────────────────────
       - name: Install CIA build tools
         run: |
-          sudo apt-get install -y python3 python3-pip
+          apt-get update -q
+          apt-get install -y wget unzip imagemagick sox
 
-          # bannertool – creates banner + icon for the CIA
+          # bannertool
           wget -q https://github.com/Steveice10/bannertool/releases/download/1.2.0/bannertool-linux-x86_64 \
                -O /usr/local/bin/bannertool
           chmod +x /usr/local/bin/bannertool
 
-          # makerom – assembles the final .cia
+          # makerom
           wget -q https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip \
-               -O makerom.zip
-          unzip -o makerom.zip makerom -d /usr/local/bin/
+               -O /tmp/makerom.zip
+          unzip -o /tmp/makerom.zip makerom -d /usr/local/bin/
           chmod +x /usr/local/bin/makerom
 
-      # ── 5. Set environment variables ─────────────────────────────────────────
-      - name: Set devkitPro environment
-        run: |
-          echo "DEVKITPRO=/opt/devkitpro"           >> $GITHUB_ENV
-          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
-          echo "PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH" >> $GITHUB_ENV
-
-      # ── 6. Generate placeholder icon if none exists ──────────────────────────
+      # ── 4. Generate placeholder assets if missing ────────────────────────────
       - name: Prepare meta assets
         run: |
           mkdir -p meta
 
-          # If no icon.png provided, generate a simple one with ImageMagick
           if [ ! -f meta/icon.png ]; then
-            sudo apt-get install -y imagemagick
             convert -size 48x48 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 14 \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 \
               -gravity center -annotate 0 "3DS\nMate" \
               meta/icon.png
             echo "Generated placeholder icon."
           fi
 
-          # Banner image (256x128 for CIA banner)
           if [ ! -f meta/banner.png ]; then
             convert -size 256x128 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 22 \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 \
               -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" \
               meta/banner.png
             echo "Generated placeholder banner."
           fi
 
-          # Audio (silent 3-second jingle for CIA)
           if [ ! -f meta/audio.wav ]; then
-            sudo apt-get install -y sox
             sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
             echo "Generated silent audio."
           fi
 
-      # ── 7. Build .3dsx ───────────────────────────────────────────────────────
+      # ── 5. Build .3dsx ───────────────────────────────────────────────────────
       - name: Build 3DSMate.3dsx
         run: |
-          export DEVKITPRO=/opt/devkitpro
-          export DEVKITARM=/opt/devkitpro/devkitARM
-          export PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH
           make
           echo "3dsx size: $(du -sh 3DSMate.3dsx)"
 
-      # ── 8. Build .cia ────────────────────────────────────────────────────────
+      # ── 6. Build .cia ────────────────────────────────────────────────────────
       - name: Build 3DSMate.cia
         run: |
-          export PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH
-
-          # 1. Build SMDH (app icon + metadata shown on HOME menu)
+          # SMDH (icon + metadata for HOME menu)
           smdhtool --create \
             "3DSMate" \
             "AI Chat powered by Groq" \
@@ -119,13 +86,13 @@ jobs:
             meta/icon.png \
             3DSMate.smdh
 
-          # 2. Build banner.bnr (banner shown in CIA installer)
+          # Banner for CIA installer
           bannertool makebanner \
             -i meta/banner.png \
             -a meta/audio.wav \
             -o 3DSMate.bnr
 
-          # 3. Build icon.icn from the SMDH
+          # Icon for CIA
           bannertool makesmdh \
             -s "3DSMate" \
             -l "AI Chat powered by Groq" \
@@ -133,37 +100,36 @@ jobs:
             -i meta/icon.png \
             -o 3DSMate.icn
 
-          # 4. Create RSF (makerom spec file)
+          # makerom RSF spec
           cat > 3DSMate.rsf << 'RSF'
-          BasicInfo:
-            Title:          3DSMate
-            CompanyCode:    "00"
-            ProductCode:    CTR-P-MATE
-            ContentType:    Application
-            Logo:           Nintendo
+BasicInfo:
+  Title:       3DSMate
+  CompanyCode: "00"
+  ProductCode: CTR-P-MATE
+  ContentType: Application
+  Logo:        Nintendo
 
-          RomFs:
-            RootPath:       romfs
+RomFs:
+  RootPath: romfs
 
-          SystemControlInfo:
-            SaveDataSize:   128KB
+SystemControlInfo:
+  SaveDataSize: 128KB
 
-          AccessControlInfo:
-            UseRomFS:       true
-            IdealProcessor: 0
-            AffinityMask:   1
-            Priority:       48
-            MaxCpu:         100
-            MemoryType:     Application
-            HandleTableSize: 0x200
-            SystemMode:     64MB
-            CoreVersion:    2
-            EnableL2Cache:  true
-            ExtendedSaveDataAccessControl:
-              Other:  true
-          RSF
+AccessControlInfo:
+  UseRomFS:        true
+  IdealProcessor:  0
+  AffinityMask:    1
+  Priority:        48
+  MaxCpu:          100
+  MemoryType:      Application
+  HandleTableSize: 0x200
+  SystemMode:      64MB
+  CoreVersion:     2
+  EnableL2Cache:   true
+  ExtendedSaveDataAccessControl:
+    Other: true
+RSF
 
-          # 5. Assemble the .cia
           makerom \
             -f cia \
             -o 3DSMate.cia \
@@ -175,7 +141,7 @@ jobs:
 
           echo "cia size: $(du -sh 3DSMate.cia)"
 
-      # ── 9. Upload both as artifacts ──────────────────────────────────────────
+      # ── 7. Upload both as artifacts ──────────────────────────────────────────
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
         with:
@@ -190,7 +156,7 @@ jobs:
           path: 3DSMate.cia
           retention-days: 30
 
-      # ── 10. GitHub Release on tag push ───────────────────────────────────────
+      # ── 8. GitHub Release on tag push ───────────────────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
