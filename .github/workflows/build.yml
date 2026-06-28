@@ -11,8 +11,9 @@ jobs:
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-latest
+    # devkitpro/devkitpro contains ALL platforms including 3DS (3ds.mk, libctru, etc.)
     container:
-      image: devkitpro/devkitarm:latest
+      image: devkitpro/devkitpro:latest
 
     steps:
       - name: Checkout repository
