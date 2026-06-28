@@ -11,7 +11,6 @@ jobs:
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-latest
-    # devkitpro/devkitarm = gba/ds/3ds/gp32/gp2x environment
     container:
       image: devkitpro/devkitarm:latest
 
@@ -19,46 +18,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies + 3DS SDK
+      - name: Install build dependencies
         run: |
           apt-get update -q
           apt-get install -y \
-            build-essential cmake git \
+            build-essential cmake git wget \
             imagemagick sox \
-            libyaml-dev
+            libyaml-dev zstd xz-utils
 
-          # Install 3ds-dev via apt — avoids dkp-pacman which 403s from CI
-          # The devkitpro apt repo is already configured in this image
-          apt-get install -y devkitpro-3ds || true
-
-          # Fallback: install 3ds tools directly from the dkp apt mirror
-          if [ ! -f /opt/devkitpro/3ds.mk ]; then
-            apt-get install -y -t stable devkitpro-3ds 2>/dev/null || true
-          fi
-
-          # Last resort: try dkp-pacman with a timeout
-          if [ ! -f /opt/devkitpro/3ds.mk ]; then
-            dkp-pacman --noconfirm -S 3ds-dev 3ds-jansson 2>/dev/null || true
-          fi
-
-          ls /opt/devkitpro/3ds.mk 2>/dev/null && echo "3ds.mk found!" || echo "WARNING: 3ds.mk missing"
-
-      - name: Build jansson for 3DS
+      # pkg.devkitpro.org returns 403 from CI, so we use the community mirror.
+      # Packages are .pkg.tar.zst/.pkg.tar.xz archives that extract straight into /opt/devkitpro.
+      - name: Install 3DS libs from mirror
         run: |
-          if [ ! -f /opt/devkitpro/portlibs/3ds/lib/libjansson.a ]; then
-            git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
-            mkdir /tmp/jansson/build && cd /tmp/jansson/build
-            cmake .. \
-              -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/3DS.cmake \
-              -DJANSSON_BUILD_SHARED_LIBS=OFF \
-              -DJANSSON_WITHOUT_TESTS=ON \
-              -DJANSSON_EXAMPLES=OFF \
-              -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds
-            make -j$(nproc)
-            make install
-          else
-            echo "jansson already installed"
-          fi
+          MIRROR="https://wii.leseratte10.de/devkitPro"
+          DKP="/opt/devkitpro"
+          mkdir -p "$DKP"
+
+          install_xz()  { wget -q "$1" -O /tmp/p.tar.xz  && tar --use-compress-program=xz  -xf /tmp/p.tar.xz  -C "$DKP" 2>/dev/null; rm -f /tmp/p.tar.xz;  }
+          install_zst() { wget -q "$1" -O /tmp/p.tar.zst && tar --use-compress-program=unzstd -xf /tmp/p.tar.zst -C "$DKP" 2>/dev/null; rm -f /tmp/p.tar.zst; }
+
+          # devkitarm-crtls — provides 3ds.mk, 3dsx.specs, etc.
+          install_xz  "$MIRROR/3ds/devkitarm-crtls-1.1.0-3-any.pkg.tar.xz"
+
+          # libctru — core 3DS homebrew library
+          install_xz  "$MIRROR/libctru/2020/libctru-2.0.1-1-any.pkg.tar.xz"
+
+          # 3ds cmake toolchain
+          install_zst "$MIRROR/cmake/3ds-cmake-1.5.1-1-any.pkg.tar.zst"
+
+          # 3ds-mbedtls — for HTTPS (httpc uses it)
+          install_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
+
+          # 3ds-jansson — JSON parsing
+          install_xz  "$MIRROR/3ds/3ds-jansson-2.12-1-any.pkg.tar.xz"
+
+          echo "=== Checking for 3ds.mk ==="
+          find "$DKP" -name "3ds.mk" 2>/dev/null
 
       - name: Build makerom
         run: |
