@@ -1,0 +1,229 @@
+name: Build 3DSMate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build .3dsx and .cia
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Cache devkitPro (saves ~5 min on repeat runs) ────────────────────
+      - name: Cache devkitPro
+        uses: actions/cache@v4
+        id: cache-devkitpro
+        with:
+          path: /opt/devkitpro
+          key: devkitpro-3ds-${{ runner.os }}-v2
+
+      # ── 3. Install devkitPro + ARM toolchain + 3DS libs ─────────────────────
+      - name: Install devkitPro
+        if: steps.cache-devkitpro.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y wget
+
+          wget https://apt.devkitpro.org/install-devkitpro-pacman
+          chmod +x ./install-devkitpro-pacman
+          echo "y" | sudo ./install-devkitpro-pacman
+
+          sudo /opt/devkitpro/pacman/bin/pacman -S --noconfirm \
+            devkitARM \
+            3ds-dev \
+            3ds-jansson
+
+      # ── 4. Install makerom + bannertool (needed for .cia) ───────────────────
+      - name: Install CIA build tools
+        run: |
+          sudo apt-get install -y python3 python3-pip
+
+          # bannertool – creates banner + icon for the CIA
+          wget -q https://github.com/Steveice10/bannertool/releases/download/1.2.0/bannertool-linux-x86_64 \
+               -O /usr/local/bin/bannertool
+          chmod +x /usr/local/bin/bannertool
+
+          # makerom – assembles the final .cia
+          wget -q https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip \
+               -O makerom.zip
+          unzip -o makerom.zip makerom -d /usr/local/bin/
+          chmod +x /usr/local/bin/makerom
+
+      # ── 5. Set environment variables ─────────────────────────────────────────
+      - name: Set devkitPro environment
+        run: |
+          echo "DEVKITPRO=/opt/devkitpro"           >> $GITHUB_ENV
+          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
+          echo "PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH" >> $GITHUB_ENV
+
+      # ── 6. Generate placeholder icon if none exists ──────────────────────────
+      - name: Prepare meta assets
+        run: |
+          mkdir -p meta
+
+          # If no icon.png provided, generate a simple one with ImageMagick
+          if [ ! -f meta/icon.png ]; then
+            sudo apt-get install -y imagemagick
+            convert -size 48x48 xc:"#1a1a2e" \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 14 \
+              -gravity center -annotate 0 "3DS\nMate" \
+              meta/icon.png
+            echo "Generated placeholder icon."
+          fi
+
+          # Banner image (256x128 for CIA banner)
+          if [ ! -f meta/banner.png ]; then
+            convert -size 256x128 xc:"#1a1a2e" \
+              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 22 \
+              -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" \
+              meta/banner.png
+            echo "Generated placeholder banner."
+          fi
+
+          # Audio (silent 3-second jingle for CIA)
+          if [ ! -f meta/audio.wav ]; then
+            sudo apt-get install -y sox
+            sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
+            echo "Generated silent audio."
+          fi
+
+      # ── 7. Build .3dsx ───────────────────────────────────────────────────────
+      - name: Build 3DSMate.3dsx
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          export PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH
+          make
+          echo "3dsx size: $(du -sh 3DSMate.3dsx)"
+
+      # ── 8. Build .cia ────────────────────────────────────────────────────────
+      - name: Build 3DSMate.cia
+        run: |
+          export PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitARM/bin:$PATH
+
+          # 1. Build SMDH (app icon + metadata shown on HOME menu)
+          smdhtool --create \
+            "3DSMate" \
+            "AI Chat powered by Groq" \
+            "3DSMate Project" \
+            meta/icon.png \
+            3DSMate.smdh
+
+          # 2. Build banner.bnr (banner shown in CIA installer)
+          bannertool makebanner \
+            -i meta/banner.png \
+            -a meta/audio.wav \
+            -o 3DSMate.bnr
+
+          # 3. Build icon.icn from the SMDH
+          bannertool makesmdh \
+            -s "3DSMate" \
+            -l "AI Chat powered by Groq" \
+            -p "3DSMate Project" \
+            -i meta/icon.png \
+            -o 3DSMate.icn
+
+          # 4. Create RSF (makerom spec file)
+          cat > 3DSMate.rsf << 'RSF'
+          BasicInfo:
+            Title:          3DSMate
+            CompanyCode:    "00"
+            ProductCode:    CTR-P-MATE
+            ContentType:    Application
+            Logo:           Nintendo
+
+          RomFs:
+            RootPath:       romfs
+
+          SystemControlInfo:
+            SaveDataSize:   128KB
+
+          AccessControlInfo:
+            UseRomFS:       true
+            IdealProcessor: 0
+            AffinityMask:   1
+            Priority:       48
+            MaxCpu:         100
+            MemoryType:     Application
+            HandleTableSize: 0x200
+            SystemMode:     64MB
+            CoreVersion:    2
+            EnableL2Cache:  true
+            ExtendedSaveDataAccessControl:
+              Other:  true
+          RSF
+
+          # 5. Assemble the .cia
+          makerom \
+            -f cia \
+            -o 3DSMate.cia \
+            -elf 3DSMate.elf \
+            -rsf 3DSMate.rsf \
+            -banner 3DSMate.bnr \
+            -icon 3DSMate.icn \
+            -major 1 -minor 0 -micro 0
+
+          echo "cia size: $(du -sh 3DSMate.cia)"
+
+      # ── 9. Upload both as artifacts ──────────────────────────────────────────
+      - name: Upload 3DSMate.3dsx
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3DSMate-3dsx
+          path: 3DSMate.3dsx
+          retention-days: 30
+
+      - name: Upload 3DSMate.cia
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3DSMate-cia
+          path: 3DSMate.cia
+          retention-days: 30
+
+      # ── 10. GitHub Release on tag push ───────────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            3DSMate.3dsx
+            3DSMate.cia
+          body: |
+            ## 3DSMate – AI Chat for Nintendo 3DS
+
+            | File | Use for |
+            |------|---------|
+            | `3DSMate.3dsx` | Homebrew Launcher (no CFW needed) |
+            | `3DSMate.cia` | HOME Menu install via FBI (CFW required) |
+
+            ### Install .3dsx
+            Copy `3DSMate.3dsx` to `/3ds/3DSMate/3DSMate.3dsx` on your SD card,
+            then open it via the Homebrew Launcher.
+
+            ### Install .cia
+            Copy `3DSMate.cia` to your SD card and install it with **FBI**.
+            The app will appear on your HOME menu.
+
+            ### First launch
+            Press **X** to enter your [Groq API key](https://console.groq.com) —
+            it is saved automatically and never needs to be entered again.
+
+            ### Controls
+            | Button | Action |
+            |--------|--------|
+            | A | Send message / Start chat |
+            | B | Back / Save & exit chat |
+            | X | Clear history / Enter API key |
+            | Y | Delete chat (in chat list) |
+            | ↑↓ | Navigate chat list |
+            | START | Quit app |
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
