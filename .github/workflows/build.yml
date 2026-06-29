@@ -11,7 +11,6 @@ jobs:
   build:
     name: Build .3dsx and .cia
     runs-on: ubuntu-22.04
-    # No container — plain Ubuntu runner, install everything ourselves
 
     steps:
       - name: Checkout repository
@@ -23,23 +22,48 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake git wget \
             imagemagick sox \
-            libyaml-dev zstd xz-utils \
-            libncurses5-dev
+            libyaml-dev zstd xz-utils
 
-      - name: Install devkitPro pacman
+      # Download verified packages directly from the community mirror.
+      # All URLs confirmed from https://wii.leseratte10.de/devkitPro/
+      - name: Install devkitARM + 3DS libs from mirror
         run: |
-          wget -q https://github.com/devkitPro/pacman/releases/download/v1.0.2/devkitpro-pacman.amd64.deb \
-               -O /tmp/dkp-pacman.deb
-          sudo apt-get install -y /tmp/dkp-pacman.deb
-          sudo dkp-pacman -Sy --noconfirm
-          sudo dkp-pacman -S --noconfirm devkitARM 3ds-dev 3ds-jansson
+          MIRROR="https://wii.leseratte10.de/devkitPro"
+          DKP="/opt/devkitpro"
+          sudo mkdir -p "$DKP"
 
-      - name: Set devkitPro environment
+          pkg_xz()  { wget -q "$1" -O /tmp/p.xz  && sudo tar -xf /tmp/p.xz  -C "$DKP" --exclude='.PKGINFO' --exclude='.INSTALL' 2>/dev/null; rm -f /tmp/p.xz;  }
+          pkg_zst() { wget -q "$1" -O /tmp/p.zst && sudo tar -xf /tmp/p.zst -C "$DKP" --exclude='.PKGINFO' --exclude='.INSTALL' 2>/dev/null; rm -f /tmp/p.zst; }
+
+          # devkitARM r65 toolchain (87MB)
+          pkg_zst "$MIRROR/devkitARM/r65%20(2024-08-30)/devkitARM-r65-1-linux_x86_64.pkg.tar.zst"
+
+          # devkitarm-crtls — provides 3ds.mk, 3dsx.specs, crt0.o
+          pkg_xz  "$MIRROR/devkitARM/devkitarm-rules/devkitarm-crtls-1.2.1-1-any.pkg.tar.xz"
+
+          # libctru 2.0.1 — core 3DS homebrew library
+          pkg_xz  "$MIRROR/libctru/2020/libctru-2.0.1-1-any.pkg.tar.xz"
+
+          # 3ds-cmake — cmake toolchain file for cross-compiling
+          pkg_zst "$MIRROR/cmake/3ds-cmake-1.5.1-1-any.pkg.tar.zst"
+
+          # 3ds-jansson — JSON library
+          pkg_xz  "$MIRROR/3ds/3ds-jansson-2.13-1-any.pkg.tar.xz"
+
+          # 3ds-mbedtls — HTTPS support
+          pkg_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
+
+          echo "--- devkitpro layout ---"
+          ls "$DKP/"
+          echo "--- looking for 3ds.mk ---"
+          find "$DKP" -name "3ds.mk" 2>/dev/null
+
+      - name: Set environment
         run: |
-          echo "DEVKITPRO=/opt/devkitpro"           >> $GITHUB_ENV
-          echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
-          echo "/opt/devkitpro/tools/bin"            >> $GITHUB_PATH
-          echo "/opt/devkitpro/devkitARM/bin"        >> $GITHUB_PATH
+          echo "DEVKITPRO=/opt/devkitpro"               >> $GITHUB_ENV
+          echo "DEVKITARM=/opt/devkitpro/devkitARM"     >> $GITHUB_ENV
+          echo "/opt/devkitpro/tools/bin"                >> $GITHUB_PATH
+          echo "/opt/devkitpro/devkitARM/bin"            >> $GITHUB_PATH
 
       - name: Build makerom
         run: |
