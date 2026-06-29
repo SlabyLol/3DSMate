@@ -1,18 +1,13 @@
-#-------------------------------------------------------------------------------
-# 3DSMate – Makefile
-# Requires: devkitARM + libctru + 3ds-jansson
-#-------------------------------------------------------------------------------
-.SUFFIXES:
+#---------------------------------------------------------------------------------
+# 3DSMate
+#---------------------------------------------------------------------------------
 
 ifeq ($(strip $(DEVKITPRO)),)
-$(error "Set DEVKITPRO in your environment, e.g.: export DEVKITPRO=/opt/devkitpro")
+$(error Please set DEVKITPRO)
 endif
 
 include $(DEVKITPRO)/3ds.mk
 
-#-------------------------------------------------------------------------------
-# Project info
-#-------------------------------------------------------------------------------
 TARGET      := 3DSMate
 BUILD       := build
 SOURCES     := source
@@ -22,69 +17,66 @@ INCLUDES    := include
 APP_TITLE       := 3DSMate
 APP_DESCRIPTION := AI Chat powered by Groq
 APP_AUTHOR      := 3DSMate Project
-APP_ICON        := meta/icon.png   # 48x48 PNG — replace with your own
+APP_ICON        := meta/icon.png
 
-#-------------------------------------------------------------------------------
-# Compiler flags
-#-------------------------------------------------------------------------------
-ARCH    := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
-CFLAGS  := -g -Wall -O2 -mword-relocations \
-            -fomit-frame-pointer -ffunction-sections \
-            $(ARCH) $(INCLUDE) -D__3DS__
+CFLAGS   := -O2 -Wall -g $(ARCH) -D__3DS__
+CXXFLAGS := $(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
+ASFLAGS  := $(ARCH)
 
-CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+LIBS := -ljansson \
+        -lmbedtls \
+        -lmbedx509 \
+        -lmbedcrypto \
+        -lctru \
+        -lm
 
-ASFLAGS := -g $(ARCH)
+LIBDIRS := $(CTRULIB) \
+           $(DEVKITPRO)/portlibs/3ds
 
-LDFLAGS  = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-
-#-------------------------------------------------------------------------------
-# Libraries
-#-------------------------------------------------------------------------------
-LIBS    := -ljansson -lmbedtls -lmbedx509 -lmbedcrypto -lctru -lm
-
-LIBDIRS := $(CTRULIB) $(DEVKITPRO)/portlibs/3ds
-
-#-------------------------------------------------------------------------------
-# Build rules
-#-------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
-export OUTPUT  := $(CURDIR)/$(TARGET)
-export TOPDIR  := $(CURDIR)
-export VPATH   := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-                  $(foreach dir,$(DATA),$(CURDIR)/$(dir))
-export DEPSDIR := $(CURDIR)/$(BUILD)
+export OUTPUT := $(CURDIR)/$(TARGET)
+export TOPDIR := $(CURDIR)
+
+export VPATH := \
+$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+$(foreach dir,$(DATA),$(CURDIR)/$(dir))
 
 CFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-export LD         := $(CC)
-export OFILES_BIN := $(addsuffix .o,$(BINFILES))
-export OFILES_SRC := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES     := $(OFILES_BIN) $(OFILES_SRC)
-export HFILES_BIN := $(addsuffix .h,$(subst .,_,$(BINFILES)))
+export OFILES := \
+$(CFILES:.c=.o) \
+$(CPPFILES:.cpp=.o) \
+$(SFILES:.s=.o) \
+$(BINFILES:=.o)
 
-export INCLUDE  := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                   -I$(CURDIR)/$(BUILD)
+export INCLUDE := \
+$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+-I$(CURDIR)/$(BUILD)
 
-export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+export LIBPATHS := \
+$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-.PHONY: $(BUILD) clean all
+.PHONY: all clean
 
 all: $(BUILD)
 
 $(BUILD):
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+	@mkdir -p $(BUILD)
+	@$(MAKE) -C $(BUILD) -f $(CURDIR)/Makefile
 
 clean:
-	@echo Cleaning...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).smdh $(TARGET).elf
+	rm -rf $(BUILD)
+	rm -f $(TARGET).3dsx
+	rm -f $(TARGET).elf
+	rm -f $(TARGET).smdh
+	rm -f $(TARGET).cia
 
 else
 
@@ -93,8 +85,6 @@ DEPENDS := $(OFILES:.o=.d)
 $(OUTPUT).3dsx: $(OUTPUT).elf $(OUTPUT).smdh
 
 $(OUTPUT).elf: $(OFILES)
-
-$(OFILES_SRC): $(HFILES_BIN)
 
 -include $(DEPENDS)
 
