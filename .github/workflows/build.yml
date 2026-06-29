@@ -53,10 +53,19 @@ jobs:
           # 3ds-mbedtls — HTTPS support
           pkg_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
 
-          echo "--- devkitpro layout ---"
-          ls "$DKP/"
-          echo "--- looking for 3ds.mk ---"
-          find "$DKP" -name "3ds.mk" 2>/dev/null
+          echo "=== TOP LEVEL ==="
+          ls -la "$DKP/" 2>/dev/null
+          echo "=== FIND 3ds.mk ANYWHERE ==="
+          find / -name "3ds.mk" 2>/dev/null || true
+          echo "=== FIND libctru.a ANYWHERE ==="
+          find / -name "libctru.a" 2>/dev/null || true
+          echo "=== FULL DKP TREE (4 levels) ==="
+          find "$DKP" -maxdepth 4 -print 2>/dev/null | sort | head -100
+
+
+
+
+
 
       - name: Set environment
         run: |
