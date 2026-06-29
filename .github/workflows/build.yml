@@ -2,7 +2,7 @@ name: Build 3DSMate
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   pull_request:
   workflow_dispatch:
 
@@ -10,41 +10,26 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      DEVKITPRO: /opt/devkitpro
-      DEVKITARM: /opt/devkitpro/devkitARM
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg ca-certificates
-
-      - name: Install devkitPro
-        run: |
-          wget https://apt.devkitpro.org/install-devkitpro-pacman
-          chmod +x install-devkitpro-pacman
-          sudo ./install-devkitpro-pacman
-
-      - name: Install 3DS toolchain
-        run: |
-          sudo dkp-pacman -Syu --noconfirm
-          sudo dkp-pacman -S --needed --noconfirm \
-            devkitARM \
-            libctru \
-            3ds-dev \
-            3ds-portlibs \
-            3ds-jansson \
-            makerom \
+      - name: Setup devkitPro
+        uses: devkitPro/action-devkitpro@v1
+        with:
+          pacman: >
+            devkitARM
+            libctru
+            3ds-dev
+            3ds-jansson
+            makerom
             bannertool
 
-      - name: Verify installation
+      - name: Show environment
         run: |
-          echo "$DEVKITPRO"
-          find "$DEVKITPRO" -name 3ds.mk
-          find "$DEVKITPRO" -name base_rules
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          find "$DEVKITPRO" -name 3ds.mk || true
+          find "$DEVKITPRO" -name base_rules || true
 
       - name: Build
         run: |
@@ -58,5 +43,5 @@ jobs:
           path: |
             *.3dsx
             *.elf
-            *.cia
             *.smdh
+            *.cia
