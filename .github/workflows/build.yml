@@ -4,173 +4,59 @@ on:
   push:
     branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build .3dsx and .cia
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+
+    container:
+      image: devkitpro/devkitarm:latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Show environment
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y \
-            build-essential cmake git wget \
-            imagemagick sox \
-            libyaml-dev zstd xz-utils \
-            gcc-arm-none-eabi binutils-arm-none-eabi \
-            libnewlib-arm-none-eabi
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          ls -la $DEVKITPRO
+          ls -la $DEVKITPRO/libctru || true
 
-      # Build devkitarm-crtls from source — this provides 3ds.mk
-      - name: Build devkitarm-crtls (provides 3ds.mk)
+      - name: Install 3DS libraries
         run: |
-          export DEVKITPRO=/opt/devkitpro
-          export DEVKITARM=/opt/devkitpro/devkitARM
-          sudo mkdir -p /opt/devkitpro/devkitARM/bin
-          sudo mkdir -p /opt/devkitpro/portlibs/3ds/lib
+          dkp-pacman -Sy --noconfirm
+          dkp-pacman -S --needed --noconfirm \
+            3ds-dev \
+            3ds-portlibs \
+            3ds-jansson
 
-          # Symlink system arm-none-eabi tools into devkitARM
-          for f in /usr/bin/arm-none-eabi-*; do
-            sudo ln -sf "$f" /opt/devkitpro/devkitARM/bin/$(basename $f) 2>/dev/null || true
-          done
-
-          git clone --depth 1 https://github.com/devkitPro/devkitarm-crtls.git /tmp/crtls
-          cd /tmp/crtls
-          sudo make install PREFIX=/opt/devkitpro
-
-          echo "=== 3ds.mk check ==="
-          find /opt/devkitpro -name "3ds.mk" 2>/dev/null
-
-      # Build libctru from source
-      - name: Build libctru
+      - name: Verify installation
         run: |
-          export DEVKITPRO=/opt/devkitpro
-          export DEVKITARM=/opt/devkitpro/devkitARM
-          export PATH=/opt/devkitpro/devkitARM/bin:$PATH
+          test -f "$DEVKITPRO/3ds.mk"
+          test -f "$DEVKITPRO/base_rules"
+          echo "Everything installed correctly."
 
-          git clone --depth 1 https://github.com/devkitPro/libctru.git /tmp/libctru
-          cd /tmp/libctru
-          make -j$(nproc)
-          sudo make install
-
-      # Build jansson cross-compiled for 3DS ARM
-      - name: Build jansson for 3DS
+      - name: Clean
         run: |
-          export DEVKITPRO=/opt/devkitpro
-          export DEVKITARM=/opt/devkitpro/devkitARM
-          export PATH=/opt/devkitpro/devkitARM/bin:$PATH
+          make clean || true
 
-          git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
-          mkdir /tmp/jansson/build && cd /tmp/jansson/build
-          cmake .. \
-            -DCMAKE_C_COMPILER=arm-none-eabi-gcc \
-            -DCMAKE_SYSTEM_NAME=Generic \
-            -DCMAKE_C_FLAGS="-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft" \
-            -DJANSSON_BUILD_SHARED_LIBS=OFF \
-            -DJANSSON_WITHOUT_TESTS=ON \
-            -DJANSSON_EXAMPLES=OFF \
-            -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds
-          make -j$(nproc)
-          sudo make install
-
-      - name: Build makerom
-        run: |
-          git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git /tmp/ctr
-          cd /tmp/ctr/makerom
-          make deps
-          make -j$(nproc)
-          sudo cp bin/makerom /usr/local/bin/makerom
-
-      - name: Build bannertool
-        run: |
-          git clone --depth 1 https://github.com/carstene1ns/3ds-bannertool.git /tmp/bannertool
-          cmake -B /tmp/bannertool/build /tmp/bannertool -DCMAKE_BUILD_TYPE=Release
-          cmake --build /tmp/bannertool/build -j$(nproc)
-          sudo cp /tmp/bannertool/build/bannertool /usr/local/bin/bannertool
-
-      - name: Prepare meta assets
-        run: |
-          mkdir -p meta
-          if [ ! -f meta/icon.png ]; then
-            convert -size 48x48 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 12 \
-              -gravity center -annotate 0 "3DS\nMate" meta/icon.png
-          fi
-          if [ ! -f meta/banner.png ]; then
-            convert -size 256x128 xc:"#1a1a2e" \
-              -fill "#00d4ff" -font DejaVu-Sans-Bold -pointsize 20 \
-              -gravity center -annotate 0 "3DSMate\nAI Chat via Groq" meta/banner.png
-          fi
-          if [ ! -f meta/audio.wav ]; then
-            sox -n -r 22050 -c 1 -b 16 meta/audio.wav trim 0.0 3.0
-          fi
-
-      - name: Build 3DSMate.3dsx
-        run: |
-          export DEVKITPRO=/opt/devkitpro
-          export DEVKITARM=/opt/devkitpro/devkitARM
-          export PATH=/opt/devkitpro/devkitARM/bin:/opt/devkitpro/tools/bin:$PATH
-          make
-
-      - name: Build 3DSMate.cia
-        run: |
-          export PATH=/opt/devkitpro/tools/bin:$PATH
-          smdhtool --create "3DSMate" "AI Chat powered by Groq" "3DSMate Project" meta/icon.png 3DSMate.smdh
-          bannertool makebanner -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
-          bannertool makesmdh -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" -i meta/icon.png -o 3DSMate.icn
-          makerom -f cia -o 3DSMate.cia -elf 3DSMate.elf -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn -major 1 -minor 0 -micro 0
-
-      - name: Upload 3DSMate.3dsx
-        uses: actions/upload-artifact@v4
-        with:
-          name: 3DSMate-3dsx
-          path: 3DSMate.3dsx
-          retention-days: 30
-
-      - name: Upload 3DSMate.cia
-        uses: actions/upload-artifact@v4
-        with:
-          name: 3DSMate-cia
-          path: 3DSMate.cia
-          retention-days: 30
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            3DSMate.3dsx
-            3DSMate.cia
-          body: |
-            ## 3DSMate – AI Chat for Nintendo 3DS
-
-            | File | Use for |
-            |------|---------|
-            | `3DSMate.3dsx` | Homebrew Launcher (no CFW needed) |
-            | `3DSMate.cia` | HOME Menu install via FBI (CFW required) |
-
-            ### Install .3dsx
-            Copy `3DSMate.3dsx` to `/3ds/3DSMate/3DSMate.3dsx` on your SD card and open via Homebrew Launcher.
-
-            ### Install .cia
-            Copy `3DSMate.cia` to your SD card and install with **FBI**.
-
-            ### First launch
-            Press **X** to enter your [Groq API key](https://console.groq.com) — saved automatically.
-
-            ### Controls
-            | Button | Action |
-            |--------|--------|
-            | A | Send message / Start chat |
-            | B | Back / Save & exit chat |
-            | X | Clear history / Enter API key |
-            | Y | Delete chat (in chat list) |
-            | ↑↓ | Navigate chat list |
-            | START | Quit app |
+      - name: Build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVKITPRO: /opt/devkitpro
+          DEVKITARM: /opt/devkitpro/devkitARM
+        run: |
+          make \
+            DEVKITPRO=/opt/devkitpro \
+            DEVKITARM=/opt/devkitpro/devkitARM
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3DSMate
+          path: |
+            *.3dsx
+            *.elf
+            *.smdh
+            *.cia
