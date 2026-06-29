@@ -22,57 +22,61 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake git wget \
             imagemagick sox \
-            libyaml-dev zstd xz-utils
+            libyaml-dev zstd xz-utils \
+            gcc-arm-none-eabi binutils-arm-none-eabi \
+            libnewlib-arm-none-eabi
 
-      # Download verified packages directly from the community mirror.
-      # All URLs confirmed from https://wii.leseratte10.de/devkitPro/
-      - name: Install devkitARM + 3DS libs from mirror
+      # Build devkitarm-crtls from source — this provides 3ds.mk
+      - name: Build devkitarm-crtls (provides 3ds.mk)
         run: |
-          MIRROR="https://wii.leseratte10.de/devkitPro"
-          DKP="/opt/devkitpro"
-          sudo mkdir -p "$DKP"
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          sudo mkdir -p /opt/devkitpro/devkitARM/bin
+          sudo mkdir -p /opt/devkitpro/portlibs/3ds/lib
 
-          pkg_xz()  { wget -q "$1" -O /tmp/p.xz  && sudo tar -xf /tmp/p.xz  -C "$DKP" --exclude='.PKGINFO' --exclude='.INSTALL' 2>/dev/null; rm -f /tmp/p.xz;  }
-          pkg_zst() { wget -q "$1" -O /tmp/p.zst && sudo tar -xf /tmp/p.zst -C "$DKP" --exclude='.PKGINFO' --exclude='.INSTALL' 2>/dev/null; rm -f /tmp/p.zst; }
+          # Symlink system arm-none-eabi tools into devkitARM
+          for f in /usr/bin/arm-none-eabi-*; do
+            sudo ln -sf "$f" /opt/devkitpro/devkitARM/bin/$(basename $f) 2>/dev/null || true
+          done
 
-          # devkitARM r65 toolchain (87MB)
-          pkg_zst "$MIRROR/devkitARM/r65%20(2024-08-30)/devkitARM-r65-1-linux_x86_64.pkg.tar.zst"
+          git clone --depth 1 https://github.com/devkitPro/devkitarm-crtls.git /tmp/crtls
+          cd /tmp/crtls
+          sudo make install PREFIX=/opt/devkitpro
 
-          # devkitarm-crtls — provides 3ds.mk, 3dsx.specs, crt0.o
-          pkg_xz  "$MIRROR/devkitARM/devkitarm-rules/devkitarm-crtls-1.2.1-1-any.pkg.tar.xz"
+          echo "=== 3ds.mk check ==="
+          find /opt/devkitpro -name "3ds.mk" 2>/dev/null
 
-          # libctru 2.0.1 — core 3DS homebrew library
-          pkg_xz  "$MIRROR/libctru/2020/libctru-2.0.1-1-any.pkg.tar.xz"
-
-          # 3ds-cmake — cmake toolchain file for cross-compiling
-          pkg_zst "$MIRROR/cmake/3ds-cmake-1.5.1-1-any.pkg.tar.zst"
-
-          # 3ds-jansson — JSON library
-          pkg_xz  "$MIRROR/3ds/3ds-jansson-2.13-1-any.pkg.tar.xz"
-
-          # 3ds-mbedtls — HTTPS support
-          pkg_xz  "$MIRROR/3ds/3ds-mbedtls-2.16.2-1-any.pkg.tar.xz"
-
-          echo "=== TOP LEVEL ==="
-          ls -la "$DKP/" 2>/dev/null
-          echo "=== FIND 3ds.mk ANYWHERE ==="
-          find / -name "3ds.mk" 2>/dev/null || true
-          echo "=== FIND libctru.a ANYWHERE ==="
-          find / -name "libctru.a" 2>/dev/null || true
-          echo "=== FULL DKP TREE (4 levels) ==="
-          find "$DKP" -maxdepth 4 -print 2>/dev/null | sort | head -100
-
-
-
-
-
-
-      - name: Set environment
+      # Build libctru from source
+      - name: Build libctru
         run: |
-          echo "DEVKITPRO=/opt/devkitpro"               >> $GITHUB_ENV
-          echo "DEVKITARM=/opt/devkitpro/devkitARM"     >> $GITHUB_ENV
-          echo "/opt/devkitpro/tools/bin"                >> $GITHUB_PATH
-          echo "/opt/devkitpro/devkitARM/bin"            >> $GITHUB_PATH
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          export PATH=/opt/devkitpro/devkitARM/bin:$PATH
+
+          git clone --depth 1 https://github.com/devkitPro/libctru.git /tmp/libctru
+          cd /tmp/libctru
+          make -j$(nproc)
+          sudo make install
+
+      # Build jansson cross-compiled for 3DS ARM
+      - name: Build jansson for 3DS
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          export PATH=/opt/devkitpro/devkitARM/bin:$PATH
+
+          git clone --depth 1 https://github.com/akheron/jansson.git /tmp/jansson
+          mkdir /tmp/jansson/build && cd /tmp/jansson/build
+          cmake .. \
+            -DCMAKE_C_COMPILER=arm-none-eabi-gcc \
+            -DCMAKE_SYSTEM_NAME=Generic \
+            -DCMAKE_C_FLAGS="-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft" \
+            -DJANSSON_BUILD_SHARED_LIBS=OFF \
+            -DJANSSON_WITHOUT_TESTS=ON \
+            -DJANSSON_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX=/opt/devkitpro/portlibs/3ds
+          make -j$(nproc)
+          sudo make install
 
       - name: Build makerom
         run: |
@@ -107,28 +111,19 @@ jobs:
           fi
 
       - name: Build 3DSMate.3dsx
-        run: make
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          export PATH=/opt/devkitpro/devkitARM/bin:/opt/devkitpro/tools/bin:$PATH
+          make
 
       - name: Build 3DSMate.cia
         run: |
-          smdhtool --create \
-            "3DSMate" "AI Chat powered by Groq" "3DSMate Project" \
-            meta/icon.png 3DSMate.smdh
-
-          bannertool makebanner \
-            -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
-
-          bannertool makesmdh \
-            -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" \
-            -i meta/icon.png -o 3DSMate.icn
-
-          makerom \
-            -f cia -o 3DSMate.cia -elf 3DSMate.elf \
-            -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn \
-            -major 1 -minor 0 -micro 0
-
-          echo "3dsx: $(du -sh 3DSMate.3dsx)"
-          echo " cia: $(du -sh 3DSMate.cia)"
+          export PATH=/opt/devkitpro/tools/bin:$PATH
+          smdhtool --create "3DSMate" "AI Chat powered by Groq" "3DSMate Project" meta/icon.png 3DSMate.smdh
+          bannertool makebanner -i meta/banner.png -a meta/audio.wav -o 3DSMate.bnr
+          bannertool makesmdh -s "3DSMate" -l "AI Chat powered by Groq" -p "3DSMate Project" -i meta/icon.png -o 3DSMate.icn
+          makerom -f cia -o 3DSMate.cia -elf 3DSMate.elf -rsf meta/3DSMate.rsf -banner 3DSMate.bnr -icon 3DSMate.icn -major 1 -minor 0 -micro 0
 
       - name: Upload 3DSMate.3dsx
         uses: actions/upload-artifact@v4
